@@ -1,0 +1,23 @@
+# Node / Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Python / Backend
+venv/
+__pycache__/
+*.pyc
+backend/venv/
+
+# Environment secrets
+.env
+kaggle.json
+
+# Datasets (too large for GitHub, download separately per README instructions)
+data/midv500_data/
+data/samples/
+*.tif
+
+# OS junk files
+.DS_Store
+Thumbs.db

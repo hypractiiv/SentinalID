@@ -1,0 +1,19 @@
+fastapi
+uvicorn
+python-multipart
+
+# P1 - OCR/MRZ
+pytesseract
+passporteye
+pillow
+opencv-python-headless
+
+# P2 - Tampering detection
+numpy
+scikit-image
+
+# P4 - Face verification
+deepface
+
+# PDF support (used by main.py for any of the three modules)
+PyMuPDF
