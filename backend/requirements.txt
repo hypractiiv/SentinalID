@@ -14,6 +14,7 @@ scikit-image
 
 # P4 - Face verification
 deepface
+tf-keras  # required by deepface's RetinaFace backend on TensorFlow 2.16+
 
 # PDF support (used by main.py for any of the three modules)
 PyMuPDF
