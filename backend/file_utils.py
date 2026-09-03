@@ -8,21 +8,33 @@
 
 import os
 import fitz  # PyMuPDF
-
+from PIL import Image
 
 def ensure_image(file_path: str) -> str:
     """If file_path is a PDF, converts its first page to a PNG sitting next
     to it and returns the PNG's path. If it's already an image, returns the
     original path unchanged. Only the first page is used — fine for ID
-    documents, which are almost always a single page/side per file."""
+    documents, which are almost always a single page/side per file.
+    Additionally, downscales large images (max 1500px on the longest edge)
+    to speed up AI processing."""
     ext = os.path.splitext(file_path)[1].lower()
-    if ext != ".pdf":
-        return file_path
+    
+    # 1. Convert PDF to PNG if necessary
+    if ext == ".pdf":
+        doc = fitz.open(file_path)
+        page = doc.load_page(0)
+        pix = page.get_pixmap()
+        image_path = file_path.rsplit(".", 1)[0] + ".png"
+        pix.save(image_path)
+        doc.close()
+    else:
+        image_path = file_path
 
-    doc = fitz.open(file_path)
-    page = doc.load_page(0)
-    pix = page.get_pixmap()
-    image_path = file_path.rsplit(".", 1)[0] + ".png"
-    pix.save(image_path)
-    doc.close()
+    # 2. Downscale large images (max 1500px on the longest edge)
+    img = Image.open(image_path)
+    max_size = 1500
+    if max(img.width, img.height) > max_size:
+        img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+        img.save(image_path)
+
     return image_path
