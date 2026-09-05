@@ -1,25 +1,20 @@
 // src/utils/generateReportPdf.js
 //
-// Builds a downloadable PDF from the same verification result object
-// ResultsDashboard.jsx already renders — no backend changes required.
+// Builds a downloadable/shareable PDF from the same verification result
+// object ResultsDashboard.jsx already renders — no backend changes
+// required.
 //
 // Requires: npm install jspdf jspdf-autotable
 
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-// Same status colors the app UI uses, just as RGB triples for jsPDF.
-const RISK_COLORS = {
-  LOW: [22, 163, 74],
-  MEDIUM: [217, 119, 6],
-  HIGH: [220, 38, 38],
-};
+const RISK_COLORS = { LOW: [22, 163, 74], MEDIUM: [217, 119, 6], HIGH: [220, 38, 38] };
 const RISK_LABEL = { LOW: "PASS", MEDIUM: "REVIEW", HIGH: "FAIL" };
-const INK = [15, 23, 42];       // slate-900, body text on white
-const MUTED = [100, 116, 139];  // slate-500
-const ACCENT = [245, 158, 11];  // amber-500
-const LINE = [226, 232, 240];   // slate-200
-
+const INK = [15, 23, 42];
+const MUTED = [100, 116, 139];
+const ACCENT = [245, 158, 11];
+const LINE = [226, 232, 240];
 const MARGIN = 40;
 
 async function urlToDataUrl(url) {
@@ -34,8 +29,10 @@ async function urlToDataUrl(url) {
   });
 }
 
-export async function generateReportPdf({ verificationId, timestamp, data }) {
-  const doc = new jsPDF({ unit: "pt", format: "a4" });
+// Renders one verification case onto the CURRENT page of `doc`, starting
+// a fresh page for itself only if the caller hasn't already positioned
+// one (buildReportDoc handles that for multi-case batches).
+async function renderCase(doc, { verificationId, timestamp, data }) {
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const contentWidth = pageWidth - MARGIN * 2;
@@ -44,9 +41,7 @@ export async function generateReportPdf({ verificationId, timestamp, data }) {
   const riskColor = RISK_COLORS[riskLevel] ?? MUTED;
   const riskLabel = RISK_LABEL[riskLevel] ?? "REVIEW";
 
-  // ---- Repeating header + footer, drawn on every page autoTable renders ----
   const drawChrome = (pageNumber) => {
-    // Header: accent tab + wordmark + verification id, on every page.
     doc.setFillColor(...ACCENT);
     doc.rect(0, 0, 6, pageHeight, "F");
 
@@ -68,7 +63,6 @@ export async function generateReportPdf({ verificationId, timestamp, data }) {
     doc.setDrawColor(...LINE);
     doc.line(MARGIN, 56, pageWidth - MARGIN, 56);
 
-    // Footer: disclaimer + page number.
     doc.setFontSize(7.5);
     doc.setTextColor(...MUTED);
     doc.text(
@@ -82,9 +76,6 @@ export async function generateReportPdf({ verificationId, timestamp, data }) {
 
   let y = 76;
 
-  // Draws a small heading above a section table/box, with a thin accent
-  // underline so sections are easy to scan without relying on table
-  // borders alone.
   const sectionHeading = (text) => {
     doc.setFont(undefined, "bold");
     doc.setFontSize(10.5);
@@ -96,11 +87,18 @@ export async function generateReportPdf({ verificationId, timestamp, data }) {
     y += 16;
   };
 
+  const ensureSpace = (needed) => {
+    if (y + needed > pageHeight - 50) {
+      doc.addPage();
+      drawChrome(doc.internal.getNumberOfPages());
+      y = 76;
+    }
+  };
+
   // ---- Verdict banner ----
   const bannerHeight = 64;
   doc.setFillColor(...riskColor);
   doc.roundedRect(MARGIN, y, contentWidth, bannerHeight, 8, 8, "F");
-
   doc.setTextColor(255, 255, 255);
   doc.setFont(undefined, "bold");
   doc.setFontSize(16);
@@ -108,15 +106,13 @@ export async function generateReportPdf({ verificationId, timestamp, data }) {
   doc.setFont(undefined, "normal");
   doc.setFontSize(9);
   doc.text("Overall risk score", MARGIN + 18, y + 46);
-
   doc.setFont(undefined, "bold");
   doc.setFontSize(22);
-  const scoreText = `${data.risk?.final_risk ?? "-"}/100`;
-  doc.text(scoreText, pageWidth - MARGIN - 18, y + 40, { align: "right" });
+  doc.text(`${data.risk?.final_risk ?? "-"}/100`, pageWidth - MARGIN - 18, y + 40, { align: "right" });
   doc.setTextColor(...INK);
   y += bannerHeight + 24;
 
-  // ---- Section: OCR / MRZ ----
+  // ---- OCR / MRZ ----
   const mrz = data.ocr?.mrz;
   const mrzRows = mrz
     ? [
@@ -145,16 +141,11 @@ export async function generateReportPdf({ verificationId, timestamp, data }) {
   });
   y = doc.lastAutoTable.finalY + 24;
 
-  // ---- Section: Document Authenticity ----
+  // ---- Document Authenticity ----
   const tamperRows = [
     ["Verdict", data.tamper?.verdict || "-"],
-    [
-      "Tampering Risk Score",
-      data.tamper?.tamper_score !== undefined ? `${data.tamper.tamper_score}/100` : "-",
-    ],
-    ...(data.tamper?.metadata_flags?.length
-      ? [["Flags", data.tamper.metadata_flags.join("; ")]]
-      : []),
+    ["Tampering Risk Score", data.tamper?.tamper_score !== undefined ? `${data.tamper.tamper_score}/100` : "-"],
+    ...(data.tamper?.metadata_flags?.length ? [["Flags", data.tamper.metadata_flags.join("; ")]] : []),
   ];
 
   sectionHeading("Document Authenticity");
@@ -172,7 +163,7 @@ export async function generateReportPdf({ verificationId, timestamp, data }) {
   });
   y = doc.lastAutoTable.finalY + 24;
 
-  // ---- Section: Face Verification ----
+  // ---- Face Verification ----
   const faceRows = [
     ["Result", data.face ? (data.face.match ? "MATCH" : "NO MATCH") : "-"],
     ["Similarity Score", data.face?.similarity_score ? `${data.face.similarity_score}%` : "-"],
@@ -194,15 +185,7 @@ export async function generateReportPdf({ verificationId, timestamp, data }) {
   });
   y = doc.lastAutoTable.finalY + 24;
 
-  // ---- Section: Liveness (placeholder, matches LivenessCard.jsx) ----
-  const ensureSpace = (needed) => {
-    if (y + needed > pageHeight - 50) {
-      doc.addPage();
-      drawChrome(doc.internal.getNumberOfPages());
-      y = 76;
-    }
-  };
-
+  // ---- Liveness placeholder ----
   ensureSpace(46);
   doc.setDrawColor(...LINE);
   doc.setFillColor(248, 250, 252);
@@ -231,9 +214,7 @@ export async function generateReportPdf({ verificationId, timestamp, data }) {
 
   const faceImages = (
     await Promise.all([
-      data.face?.doc_face_image
-        ? addImageBlock("Document Face", data.face.doc_face_image, true, 140, 105)
-        : null,
+      data.face?.doc_face_image ? addImageBlock("Document Face", data.face.doc_face_image, true, 140, 105) : null,
       data.face?.selfie_face_image
         ? addImageBlock("Selfie Face", data.face.selfie_face_image, true, 140, 105)
         : null,
@@ -241,9 +222,6 @@ export async function generateReportPdf({ verificationId, timestamp, data }) {
   ).filter(Boolean);
 
   if (faceImages.length) {
-    // Reserve space for the heading AND the image row together, up front —
-    // otherwise it's possible to fit just the heading before a page break,
-    // stranding it on the previous page from its own images.
     ensureSpace(14 + 130);
     doc.setFont(undefined, "bold");
     doc.setFontSize(10);
@@ -266,8 +244,6 @@ export async function generateReportPdf({ verificationId, timestamp, data }) {
     : null;
 
   if (elaImage) {
-    // Same fix: reserve space for the title + image as one block instead
-    // of checking each separately.
     ensureSpace(14 + elaImage.height + 16);
     doc.setFont(undefined, "bold");
     doc.setFontSize(10);
@@ -280,6 +256,54 @@ export async function generateReportPdf({ verificationId, timestamp, data }) {
     doc.addImage(elaImage.dataUrl, "JPEG", MARGIN, y, elaImage.width, elaImage.height);
     y += elaImage.height + 16;
   }
+}
 
+/**
+ * Core builder shared by single-case download, share, and multi-case
+ * batch reports. `cases` is an array of { verificationId, timestamp, data }.
+ */
+export async function buildReportDoc(cases) {
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  for (let i = 0; i < cases.length; i++) {
+    if (i > 0) doc.addPage();
+    await renderCase(doc, cases[i]);
+  }
+  return doc;
+}
+
+/** Single-case report, saved directly (the original "Download PDF Report" behavior). */
+export async function generateReportPdf({ verificationId, timestamp, data }) {
+  const doc = await buildReportDoc([{ verificationId, timestamp, data }]);
   doc.save(`${verificationId || "sentinelid-report"}.pdf`);
+}
+
+/**
+ * Single-case report, offered via the OS share sheet when the browser
+ * supports sharing files (navigator.canShare with a File). Falls back to
+ * a plain download if the Web Share API or file-sharing isn't available.
+ * Returns "shared" or "downloaded" so the caller can adjust its toast.
+ */
+export async function shareReportPdf({ verificationId, timestamp, data }) {
+  const doc = await buildReportDoc([{ verificationId, timestamp, data }]);
+  const filename = `${verificationId || "sentinelid-report"}.pdf`;
+  const blob = doc.output("blob");
+  const file = new File([blob], filename, { type: "application/pdf" });
+
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: "SentinelID Screening Report" });
+      return "shared";
+    } catch (err) {
+      if (err.name === "AbortError") return "cancelled"; // user dismissed the share sheet
+      // fall through to download on any other share failure
+    }
+  }
+  doc.save(filename);
+  return "downloaded";
+}
+
+/** Multi-case report — one case per page (or more, if a case overflows), for a batch pulled from History. */
+export async function generateBatchReportPdf(cases) {
+  const doc = await buildReportDoc(cases);
+  doc.save(`sentinelid-batch-report-${Date.now()}.pdf`);
 }

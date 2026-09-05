@@ -1,125 +1,175 @@
-# SentinelID frontend — restructured
+# SentinelID frontend
 
-Rebuilt per the Frontend UI Implementation Blueprint's information
-architecture (dashboard / verify / history / settings, with an app shell
-and sidebar), while keeping:
+Frontend for the SentinelID identity-verification demo, built around the
+existing backend contract (`POST /verify` → `{ ocr, tamper, face }`) with
+no backend changes required anywhere below unless explicitly noted.
 
-- the same color theme (slate-900/800/700 dark shell, amber-500 accent,
-  green/amber/red status colors) — no new palette introduced
-- the exact same backend integration — `api/verifyDocument.js` posts to
-  `POST /verify` and expects `{ ocr, tamper, face }` back, unchanged from
-  the original. `data/computeRisk.js` is also unchanged.
-
-## What changed structurally
+## Install
 
 ```
-src/
-  api/verifyDocument.js       same /verify contract, added pingBackend()
-                               for the sidebar's connectivity indicator
-  data/computeRisk.js         unchanged
-  data/mockData.js            unchanged (kept for reference/dev use)
-  components/
-    layout/
-      AppShell.jsx            sidebar + navbar + content wrapper
-      Sidebar.jsx             nav: Dashboard / Verify / History / Settings
-      Navbar.jsx              page title + live backend status dot
-    ui/
-      Badge.jsx                PASS/REVIEW/FAIL/etc. pill, reused everywhere
-      EmptyState.jsx
-    verification/
-      UploadScreen.jsx         same upload UI, now embedded in a page
-      ProcessingScreen.jsx     same pipeline animation, now shows all 4
-                               stages incl. liveness ("not yet available")
-      ResultsDashboard.jsx     same evidence cards + a Liveness placeholder
-                               card and a plain-language verdict line
-      OcrFieldsCard.jsx        unchanged
-      TamperHeatmapCard.jsx    same data, evidence now behind "View analysis"
-      FaceMatchCard.jsx        unchanged
-      RiskGauge.jsx            unchanged
-      VerdictBadge.jsx         unchanged
-      LivenessCard.jsx         new — placeholder for the unimplemented P3
-                               stage so results don't need to reflow later
-  pages/
-    Dashboard.jsx              KPI cards + recent verifications (from history)
-    Verify.jsx                 hosts the upload → processing → results flow
-    History.jsx                full case table, click a row to reopen its report
-    Settings.jsx                shows the backend endpoint + data-handling note
-  App.jsx                      owns page + in-memory verification history
-```
-
-## What deliberately did NOT change
-
-- No new API calls, response shape, or endpoint — `verifyDocument()` is
-  byte-for-byte the same function.
-- No color palette changes — every class is drawn from the same
-  slate/amber/green/red tokens the original five components already used.
-- No persistence: verification history lives in React state in `App.jsx`
-  for the session only, per the blueprint's privacy guidance (documents,
-  selfies, and full results are never written to localStorage).
-
-## PDF report
-
-`ResultsDashboard.jsx` has a "Download PDF Report" button that calls
-`utils/generateReportPdf.js`. Requires:
-
-```
+npm install
 npm install jspdf jspdf-autotable
 ```
 
-It's built entirely from the same `data` object the cards already render
-(verdict, risk score, MRZ fields, tamper score/verdict, face match/reason),
-so **no backend changes are required**.
+Everything else (React, Tailwind v4, framer-motion) should already be in
+your `package.json` from the original project.
 
-Layout:
-- A repeating letterhead header (wordmark, verification ID, timestamp)
-  and footer (disclaimer + page number) on every page
-- A colored verdict banner (green/amber/red, matching the app's risk
-  colors) with the score
-- Each section (OCR/MRZ, Document Authenticity, Face Verification) as a
-  proper two-column table via `jspdf-autotable`, striped rows, with a
-  short accent-underlined heading above it
-- A liveness placeholder box, matching `LivenessCard.jsx`
-- Document face + selfie face shown side by side, and the ELA heatmap in
-  a bordered box (border color follows the tamper verdict, not the
-  overall risk level, so they can't visually contradict each other)
-- Multi-page safe — long flag lists or evidence sections push later
-  content onto a new page automatically, with the header/footer repeated
+## Structure
 
-The document face, selfie face, and ELA heatmap images are embedded on a
-best-effort basis — if an image can't be fetched (e.g. a CORS-blocked
-cross-origin image URL), that image is silently skipped and the rest of
-the PDF still generates with all the text fields intact.
+```
+src/
+  api/verifyDocument.js       POST /verify — now accepts an optional
+                               AbortSignal for cancellation; pingBackend()
+                               for the navbar's connectivity indicator
+  data/computeRisk.js          risk-scoring logic, unchanged
+  context/ToastContext.jsx     app-wide toast notifications (React context,
+                               no extra dependency)
+  utils/
+    caseId.js                  VER-000101-style ID generator
+    generateReportPdf.js       PDF report builder: single download, share
+                               sheet, and multi-case batch reports all
+                               share one core renderer
+  components/
+    layout/                    AppShell, Sidebar, Navbar — app-wide chrome,
+                               screen-reader stage announcer, print:hidden
+                               on nav so printed reports don't include it
+    ui/                        Badge, EmptyState — small reusable pieces
+    dashboard/
+      VerdictBarChart.jsx       lightweight CSS bar chart, no charting lib
+    verification/
+      UploadScreen.jsx          drag-and-drop, client-side file validation,
+                               image previews, webcam capture toggle
+      CameraCapture.jsx         getUserMedia-based selfie capture
+      ProcessingScreen.jsx      respects prefers-reduced-motion; Cancel button
+      ResultsDashboard.jsx      Download PDF / Share / Print buttons
+      OcrFieldsCard.jsx, TamperHeatmapCard.jsx, FaceMatchCard.jsx,
+      RiskGauge.jsx, VerdictBadge.jsx, LivenessCard.jsx   unchanged
+  pages/
+    Dashboard.jsx               KPIs + verdict distribution chart + recent list
+    Verify.jsx                  stateless; driven by props from App.jsx
+    History.jsx                 search / verdict / date filters, CSV export,
+                               multi-select batch PDF download
+    Settings.jsx                backend endpoint + data-handling note
+  App.jsx                       owns page routing, verification state
+                               (files/stage/result/error), and history
+```
 
-Case IDs (`VER-000101`, etc.) and timestamps are now generated once, in
-`pages/Verify.jsx` at the moment a result comes back, via
-`utils/caseId.js` — so the same ID/timestamp shows up whether you're
-looking at the just-completed report or reopening it later from History.
+## What's new in this round, and why
 
-## Fix: verification stopped when you switched pages
+**Bug fix — verification surviving page switches.** `App.jsx` now owns
+`documentFile`, `selfieFile`, `verifyStage`, `verifyResult`, and
+`verifyError` instead of `pages/Verify.jsx` holding them locally. Since
+`Verify` unmounts whenever you navigate elsewhere but `App` never does,
+a scan started on the Verify page now keeps running and lands correctly
+even if you switch to Dashboard/History in the meantime. The sidebar
+shows a pulsing dot and the navbar shows a "Verification running…" badge
+(click to jump back) while this is happening.
 
-Previously `pages/Verify.jsx` held its own `stage`/`result`/`error`
-state. Since `App.jsx` renders pages conditionally
-(`{page === "verify" && <Verify />}`), navigating to Dashboard/History/
-Settings **unmounted** the Verify component — so when the backend
-request finished while you were elsewhere, it tried to update state on a
-component that no longer existed, and React silently dropped it. The
-scan looked like it just vanished.
+**Retry without re-picking files.** Because the files now live in
+`App.jsx`, a failed scan leaves them in place — the upload screen shows
+an error banner with a "Try Again" button that resubmits immediately.
 
-Fixed by lifting `verifyStage` / `verifyResult` / `verifyError` up into
-`App.jsx` (which never unmounts) and making `pages/Verify.jsx` a
-stateless view driven entirely by props. Now a scan keeps running (and
-its result lands) no matter which page you're on, and:
-- the sidebar's "Verify Identity" link shows a small pulsing dot while a
-  scan is running and you're on a different page
-- the navbar shows a "Verification running…" badge you can click to jump
-  straight back to the results once they're ready
+**Cancel a running scan.** `verifyDocument()` accepts an `AbortSignal`;
+`App.jsx` wires up an `AbortController` per request, and
+`ProcessingScreen` has a "Cancel verification" button.
 
-## Notes
+**File validation + drag-and-drop + previews.** `UploadScreen.jsx` now
+validates type (`image/jpeg|png|webp`, plus PDF for the document) and
+size (10MB cap) client-side, accepts drag-and-drop onto either dropzone,
+and shows an image preview once a file is selected (or a generic icon
+for PDFs).
 
-- `pingBackend()` in `verifyDocument.js` is additive (a plain `GET /` with
-  a try/catch, same pattern as the existing network-error handling) — it
-  only feeds the sidebar's "Backend connected / unavailable" dot and never
-  touches the verification request itself.
-- Liveness (P3) isn't implemented on the backend, so `LivenessCard` is a
-  clearly-labeled placeholder rather than fabricated data, and the risk
-  score still only factors in OCR/tamper/face exactly as before.
+**Webcam selfie capture.** A small "Upload / Use Camera" toggle next to
+the selfie dropzone opens `CameraCapture.jsx` (plain `getUserMedia`, no
+new dependency) so you can take the selfie directly instead of needing a
+pre-existing file.
+
+**Toast notifications.** `ToastContext.jsx` (wrapping the whole app in
+`main.jsx`) surfaces network errors, cancellations, and successful scans
+as dismissable toasts, in addition to the inline error banner on the
+upload screen.
+
+**Reduced motion.** `ProcessingScreen` checks
+`prefers-reduced-motion` and swaps the pulsing/sliding `framer-motion`
+animations for a static equivalent when it's set.
+
+**Accessibility.** A visually-hidden `aria-live` region in `AppShell`
+announces stage changes ("Verification in progress." / "complete." /
+failure text) for screen readers, and every interactive element
+(buttons, dropzones, checkboxes) has a visible `focus-visible` ring.
+
+**Print support.** `index.css` adds a `@media print` block that flips
+the dark theme to print-friendly colors, and everything print-irrelevant
+(sidebar, navbar, action buttons, toasts) is hidden via Tailwind's
+built-in `print:hidden`. The "Print" button on the results page just
+calls `window.print()`.
+
+**PDF report: Share button + batch reports.** `generateReportPdf.js` was
+refactored around one shared `buildReportDoc(cases)` core:
+- `generateReportPdf(...)` — same single-case download as before
+- `shareReportPdf(...)` — offers the PDF through the OS share sheet via
+  the Web Share API when the browser supports sharing files, falling
+  back to a plain download otherwise
+- `generateBatchReportPdf(cases)` — combines several verification cases
+  (selected via checkboxes in History) into one PDF, one case per page(s)
+
+**History: filters, search, CSV export.** Search by verification ID,
+filter by verdict and by date range (today / last 7 days / all time),
+export the currently-filtered rows as CSV (pure client-side `Blob`, no
+library), and select multiple rows via checkboxes to generate a combined
+PDF report for just those cases.
+
+**Dashboard: verdict distribution chart.** A small CSS/div bar chart
+(no charting library added) showing the Passed/Review/Failed split for
+the session, next to the existing KPI cards and recent-cases table.
+
+## Refinements — visual polish, interactivity, spacing
+
+**Icon set.** `components/ui/Icon.jsx` — a small hand-picked set of inline
+SVG icons (no new dependency) now used across nav, buttons, cards, and
+empty states instead of relying on plain text alone.
+
+**Pulsing status dots, as asked.** The navbar's backend status dot now
+pulses while `connected` (and while `checking`), and stays a steady red
+when `unavailable` — a steady dot reads as "stopped/alert", a pulsing one
+reads as "actively live". The amber "verification running" dot (sidebar
++ navbar badge) already pulsed and still does.
+
+**Cancel Verification is now a real button.** `ProcessingScreen.jsx`'s
+cancel action was a plain text link; it's now a bordered button with an
+icon, matching the rest of the button styling in the app.
+
+**Less dead space:**
+- `UploadScreen.jsx` is now wrapped in a bordered card with numbered
+  steps ("1. Identity document", "2. Selfie"), tighter dropzones, and a
+  full-width submit button — it reads as a form rather than a loose
+  scatter of elements.
+- `ProcessingScreen.jsx` replaced the plain pulsing text list with an
+  actual icon-based stepper (connected circles), which uses the
+  horizontal space instead of a narrow centered column.
+- `Dashboard.jsx` gained a "Pipeline Stages" side panel next to the
+  verdict distribution chart, and icons on every KPI card, so the wide
+  desktop layout isn't just four numbers and a table.
+- `ResultsDashboard.jsx` now packs cards into a 3-column grid on large
+  screens (was a sparser 2-column layout), with an icon badge in the
+  verdict banner and icons on every card header and action button.
+
+**Hover/interactive feedback.** Cards across Dashboard, Settings, and the
+evidence cards on the results page now have a subtle border-brighten (and
+KPI cards a slight lift) on hover, plus every button/link has a visible
+`focus-visible` ring for keyboard users — extending the accessibility
+pass from the previous round.
+
+None of this touches the backend, the color palette (still slate/amber/
+green/red), or the data flow — it's presentation-layer only.
+
+## What deliberately still hasn't changed
+
+- No new API calls or response shape — `verifyDocument()`'s contract is
+  the same `{ ocr, tamper, face }`, just with an optional cancellation
+  signal added.
+- No color palette changes — every new component still draws from the
+  same slate/amber/green/red tokens.
+- No persistence — verification history and all of the above still live
+  in React state for the session only; nothing is written to
+  localStorage, per the blueprint's privacy guidance.

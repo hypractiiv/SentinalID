@@ -1,20 +1,20 @@
 // src/api/verifyDocument.js
 //
-// Replaces mockData.js for the verification flow. Same idea as
-// mockData.js — you call one function and get back an object with
-// ocr/tamper/face results — except this one actually hits your running
-// backend instead of returning hardcoded fake data.
+// Same idea as mockData.js — you call one function and get back an
+// object with ocr/tamper/face results — except this one actually hits
+// your running backend instead of returning hardcoded fake data.
 //
 // Usage in a component:
 //
 //   import { verifyDocument } from "../api/verifyDocument";
 //
-//   const result = await verifyDocument(documentFile, selfieFile);
+//   const result = await verifyDocument(documentFile, selfieFile, signal);
 //   // result looks like:
 //   // { ocr: {...}, tamper: {...}, face: {...} }
 //
-// where documentFile and selfieFile are File objects — e.g. straight from
-// an <input type="file" onChange={(e) => setFile(e.target.files[0])} />
+// where documentFile and selfieFile are File objects, and `signal` is an
+// optional AbortSignal (from `new AbortController()`) so callers can
+// cancel an in-flight request — see App.jsx's cancelVerification().
 
 export const BACKEND_URL = "http://127.0.0.1:8000";
 
@@ -24,10 +24,14 @@ export const BACKEND_URL = "http://127.0.0.1:8000";
  *
  * @param {File} documentFile - the ID document (image or PDF)
  * @param {File} selfieFile - the selfie/live photo
+ * @param {AbortSignal} [signal] - optional signal to cancel the request
  * @returns {Promise<Object>} the combined result: { ocr, tamper, face }
- * @throws {Error} if the request fails or the server returns a non-2xx status
+ * @throws {Error} if the request fails or the server returns a non-2xx
+ *   status. If cancelled via `signal`, the thrown error's `name` is
+ *   "AbortError" — callers can check that to distinguish a deliberate
+ *   cancellation from a real failure.
  */
-export async function verifyDocument(documentFile, selfieFile) {
+export async function verifyDocument(documentFile, selfieFile, signal) {
   const formData = new FormData();
   formData.append("document", documentFile);
   formData.append("selfie", selfieFile);
@@ -37,11 +41,15 @@ export async function verifyDocument(documentFile, selfieFile) {
     response = await fetch(`${BACKEND_URL}/verify`, {
       method: "POST",
       body: formData,
+      signal,
       // Don't set a Content-Type header manually — the browser sets the
       // correct multipart/form-data boundary automatically when you pass
       // a FormData body. Setting it yourself breaks the upload.
     });
   } catch (networkError) {
+    // Re-throw AbortError as-is so callers can tell "cancelled" apart
+    // from "actually failed" (see the catch block in App.jsx).
+    if (networkError.name === "AbortError") throw networkError;
     // This branch fires if the backend isn't running at all, or CORS is
     // misconfigured — not if the backend just returns an error response.
     throw new Error(

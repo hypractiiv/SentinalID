@@ -1,4 +1,5 @@
 import { BACKEND_URL } from "../api/verifyDocument";
+import Icon from "../components/ui/Icon";
 
 export default function Settings() {
   return (
@@ -8,8 +9,11 @@ export default function Settings() {
         <p className="text-slate-400 text-sm mt-1">System connectivity and session information</p>
       </div>
 
-      <div className="bg-slate-800 rounded-xl p-6 space-y-4">
-        <h2 className="font-semibold">Backend</h2>
+      <div className="bg-slate-800 rounded-xl p-6 space-y-4 border border-slate-700/50 hover:border-slate-600 transition-colors">
+        <h2 className="font-semibold flex items-center gap-2">
+          <Icon name="server" className="w-4 h-4 text-slate-400" />
+          Backend
+        </h2>
         <div className="flex justify-between text-sm py-1.5 border-b border-slate-700">
           <span className="text-slate-400">Verification endpoint</span>
           <span className="font-mono text-xs">{BACKEND_URL}/verify</span>
@@ -20,8 +24,11 @@ export default function Settings() {
         </p>
       </div>
 
-      <div className="bg-slate-800 rounded-xl p-6 space-y-2">
-        <h2 className="font-semibold">Data handling</h2>
+      <div className="bg-slate-800 rounded-xl p-6 space-y-2 border border-slate-700/50 hover:border-slate-600 transition-colors">
+        <h2 className="font-semibold flex items-center gap-2">
+          <Icon name="shieldCheck" className="w-4 h-4 text-slate-400" />
+          Data handling
+        </h2>
         <p className="text-sm text-slate-400">
           Documents and selfies are sent directly to the backend for scoring and are not
           persisted anywhere in this app. Verification history is kept in memory for the
