@@ -5,7 +5,7 @@ from io import BytesIO
 from deepface import DeepFace
 from PIL import Image, ImageDraw
 
-MATCH_DISTANCE_THRESHOLD = 0.42
+MATCH_DISTANCE_THRESHOLD = 0.55
 
 
 def _draw_face_box(image_path: str, facial_area: dict) -> str:
