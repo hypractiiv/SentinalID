@@ -2,10 +2,6 @@ import UploadScreen from "../components/verification/UploadScreen";
 import ProcessingScreen from "../components/verification/ProcessingScreen";
 import ResultsDashboard from "../components/verification/ResultsDashboard";
 
-// Deliberately stateless. The actual stage/result/error/files live in
-// App.jsx so an in-progress or completed scan survives you navigating to
-// another section and back — see the comment above startVerification in
-// App.jsx.
 export default function Verify({
   stage,
   result,
@@ -17,6 +13,7 @@ export default function Verify({
   onSubmit,
   onCancel,
   onReset,
+  onUpdateDecision,
 }) {
   return (
     <div>
@@ -31,7 +28,13 @@ export default function Verify({
         />
       )}
       {stage === "processing" && <ProcessingScreen onCancel={onCancel} />}
-      {stage === "results" && <ResultsDashboard data={result} onReset={onReset} />}
+      {stage === "results" && (
+        <ResultsDashboard
+          data={result}
+          onReset={onReset}
+          onUpdateDecision={onUpdateDecision}
+        />
+      )}
     </div>
   );
 }

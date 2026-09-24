@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import AppShell from "./components/layout/AppShell";
 import Dashboard from "./pages/Dashboard";
 import Verify from "./pages/Verify";
@@ -9,29 +9,47 @@ import { computeRisk } from "./data/computeRisk";
 import { generateCaseId } from "./utils/caseId";
 import { useToast } from "./context/ToastContext";
 
+const STORAGE_KEY = "sentinelid_history_ledger";
+
+function loadInitialHistory() {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function App() {
   const [page, setPage] = useState("dashboard");
-  const [history, setHistory] = useState([]);
+  const [history, setHistory] = useState(loadInitialHistory);
   const { addToast } = useToast();
 
-  // Verification state lives HERE, not inside pages/Verify.jsx. App is
-  // always mounted; the Verify page is unmounted whenever you navigate to
-  // Dashboard/History/Settings. Keeping stage/result/error/files here
-  // means: (a) a scan keeps running and its result lands no matter which
-  // page you're on, and (b) if a scan fails, the previously-selected
-  // files are still here — "Try Again" doesn't require re-picking them.
   const [documentFile, setDocumentFile] = useState(null);
   const [selfieFile, setSelfieFile] = useState(null);
   const [verifyStage, setVerifyStage] = useState("upload"); // upload | processing | results
   const [verifyResult, setVerifyResult] = useState(null);
   const [verifyError, setVerifyError] = useState(null);
+  // Stable epoch for the processing timer — lives in App so it survives tab switches.
+  const [processingStartMs, setProcessingStartMs] = useState(null);
   const controllerRef = useRef(null);
+
+  // Sync history to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(history.slice(0, 50)));
+    } catch (e) {
+      console.warn("Could not save history to localStorage", e);
+    }
+  }, [history]);
 
   const startVerification = async () => {
     if (!documentFile || !selfieFile) return;
     const controller = new AbortController();
     controllerRef.current = controller;
 
+    setProcessingStartMs(Date.now());
     setVerifyStage("processing");
     setVerifyError(null);
     try {
@@ -47,17 +65,23 @@ export default function App() {
       };
       setVerifyResult(record);
       setVerifyStage("results");
+      setProcessingStartMs(null);
       setHistory((prev) => [record, ...prev]);
-      addToast(`Verification ${record.id} complete — ${risk.risk_level} risk.`, "success");
+      addToast(
+        `Verification ${record.id} complete — ${risk.risk_level} risk (${risk.verdict_action || "ALLOW"}).`,
+        "success"
+      );
     } catch (err) {
       if (err.name === "AbortError") {
         setVerifyStage("upload");
+        setProcessingStartMs(null);
         addToast("Verification cancelled.", "warning");
         return;
       }
       console.error(err);
       setVerifyError(err.message);
       setVerifyStage("upload");
+      setProcessingStartMs(null);
       addToast(err.message, "error");
     } finally {
       controllerRef.current = null;
@@ -68,14 +92,22 @@ export default function App() {
     controllerRef.current?.abort();
   };
 
-  // Used by "Scan another document" on the results page — clears
-  // everything, unlike an error retry which deliberately keeps the files.
   const resetVerification = () => {
     setVerifyStage("upload");
     setVerifyResult(null);
     setVerifyError(null);
     setDocumentFile(null);
     setSelfieFile(null);
+    setProcessingStartMs(null);
+  };
+
+  const handleUpdateDecision = (caseId, decisionData) => {
+    setHistory((prev) =>
+      prev.map((rec) => (rec.id === caseId ? { ...rec, ...decisionData } : rec))
+    );
+    if (verifyResult?.id === caseId) {
+      setVerifyResult((prev) => ({ ...prev, ...decisionData }));
+    }
   };
 
   return (
@@ -93,9 +125,16 @@ export default function App() {
           onSubmit={startVerification}
           onCancel={cancelVerification}
           onReset={resetVerification}
+          onUpdateDecision={handleUpdateDecision}
         />
       )}
-      {page === "history" && <History history={history} onNavigate={setPage} />}
+      {page === "history" && (
+        <History
+          history={history}
+          onNavigate={setPage}
+          onUpdateDecision={handleUpdateDecision}
+        />
+      )}
       {page === "settings" && <Settings />}
     </AppShell>
   );

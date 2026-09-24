@@ -1,81 +1,118 @@
 // src/api/verifyDocument.js
-//
-// Same idea as mockData.js — you call one function and get back an
-// object with ocr/tamper/face results — except this one actually hits
-// your running backend instead of returning hardcoded fake data.
-//
-// Usage in a component:
-//
-//   import { verifyDocument } from "../api/verifyDocument";
-//
-//   const result = await verifyDocument(documentFile, selfieFile, signal);
-//   // result looks like:
-//   // { ocr: {...}, tamper: {...}, face: {...} }
-//
-// where documentFile and selfieFile are File objects, and `signal` is an
-// optional AbortSignal (from `new AbortController()`) so callers can
-// cancel an in-flight request — see App.jsx's cancelVerification().
+// High-performance API client for SentinelID screening service.
 
-export const BACKEND_URL = "http://127.0.0.1:8000";
+export const DEFAULT_BACKEND_URL = "http://127.0.0.1:8000";
+
+export function getBackendUrl() {
+  if (typeof window !== "undefined") {
+    return localStorage.getItem("sentinelid_backend_url") || DEFAULT_BACKEND_URL;
+  }
+  return DEFAULT_BACKEND_URL;
+}
+
+export function setBackendUrl(url) {
+  if (typeof window !== "undefined") {
+    localStorage.setItem("sentinelid_backend_url", url);
+  }
+}
 
 /**
- * Sends a document image/PDF and a selfie image to the backend's /verify
- * endpoint and returns the combined OCR + tamper + face result.
+ * Sends a document image/PDF and selfie to the backend's /verify endpoint.
+ * Returns combined OCR, Tamper, Liveness, Face, Risk, and Telemetry result.
  *
- * @param {File} documentFile - the ID document (image or PDF)
- * @param {File} selfieFile - the selfie/live photo
- * @param {AbortSignal} [signal] - optional signal to cancel the request
- * @returns {Promise<Object>} the combined result: { ocr, tamper, face }
- * @throws {Error} if the request fails or the server returns a non-2xx
- *   status. If cancelled via `signal`, the thrown error's `name` is
- *   "AbortError" — callers can check that to distinguish a deliberate
- *   cancellation from a real failure.
+ * @param {File|Blob} documentFile
+ * @param {File|Blob} selfieFile
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<Object>}
  */
 export async function verifyDocument(documentFile, selfieFile, signal) {
+  const backendUrl = getBackendUrl();
   const formData = new FormData();
   formData.append("document", documentFile);
   formData.append("selfie", selfieFile);
 
+  const t0 = performance.now();
   let response;
+
   try {
-    response = await fetch(`${BACKEND_URL}/verify`, {
+    response = await fetch(`${backendUrl}/verify`, {
       method: "POST",
       body: formData,
       signal,
-      // Don't set a Content-Type header manually — the browser sets the
-      // correct multipart/form-data boundary automatically when you pass
-      // a FormData body. Setting it yourself breaks the upload.
     });
   } catch (networkError) {
-    // Re-throw AbortError as-is so callers can tell "cancelled" apart
-    // from "actually failed" (see the catch block in App.jsx).
     if (networkError.name === "AbortError") throw networkError;
-    // This branch fires if the backend isn't running at all, or CORS is
-    // misconfigured — not if the backend just returns an error response.
     throw new Error(
-      `Could not reach the backend at ${BACKEND_URL}. Is it running? (${networkError.message})`
+      `Could not reach the SentinelID backend at ${backendUrl}. Ensure the uvicorn server is running on port 8000.`
     );
   }
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Backend returned ${response.status}: ${errorText}`);
+    throw new Error(`Screening service error (${response.status}): ${errorText}`);
+  }
+
+  const data = await response.json();
+  const clientLatencyMs = Math.round(performance.now() - t0);
+
+  // Attach client-side latency profiling if telemetry exists
+  if (!data.telemetry) {
+    data.telemetry = {};
+  }
+  data.telemetry.client_roundtrip_ms = clientLatencyMs;
+
+  return data;
+}
+
+/**
+ * Standalone liveness verification endpoint call.
+ *
+ * @param {File|Blob} selfieFile
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<Object>}
+ */
+export async function verifyLivenessOnly(selfieFile, signal) {
+  const backendUrl = getBackendUrl();
+  const formData = new FormData();
+  formData.append("selfie", selfieFile);
+
+  let response;
+  try {
+    response = await fetch(`${backendUrl}/liveness/verify`, {
+      method: "POST",
+      body: formData,
+      signal,
+    });
+  } catch (networkError) {
+    if (networkError.name === "AbortError") throw networkError;
+    throw new Error(`Could not reach backend at ${backendUrl}: ${networkError.message}`);
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Liveness service error (${response.status}): ${errorText}`);
   }
 
   return response.json();
 }
 
 /**
- * Lightweight, non-throwing connectivity check used by the UI's system
- * status indicator. Does not touch the /verify contract above.
+ * Health check & latency test.
  *
- * @returns {Promise<boolean>} true if the backend responded at all
+ * @returns {Promise<{ ok: boolean, latencyMs: number, info: Object|null }>}
  */
 export async function pingBackend() {
+  const backendUrl = getBackendUrl();
+  const t0 = performance.now();
   try {
-    await fetch(`${BACKEND_URL}/`, { method: "GET" });
-    return true;
+    const res = await fetch(`${backendUrl}/health`, { method: "GET" });
+    const latencyMs = Math.round(performance.now() - t0);
+    if (res.ok) {
+      const info = await res.json();
+      return { ok: true, latencyMs, info };
+    }
+    return { ok: false, latencyMs, info: null };
   } catch {
-    return false;
+    return { ok: false, latencyMs: 0, info: null };
   }
 }

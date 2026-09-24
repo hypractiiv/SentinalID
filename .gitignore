@@ -8,6 +8,13 @@ venv/
 __pycache__/
 *.pyc
 backend/venv/
+backend/__pycache__/
+backend/uploads/
+backend/*.jpg
+backend/*.png
+backend/*_facecrop.jpg
+backend/*_preprocessed.jpg
+backend/*_resized.jpg
 
 # Environment secrets
 .env
@@ -18,6 +25,8 @@ data/midv500_data/
 data/samples/
 *.tif
 
-# OS junk files
+# OS junk & logs
 .DS_Store
 Thumbs.db
+*.log
+.system_generated/

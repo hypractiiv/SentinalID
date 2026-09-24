@@ -1,40 +1,46 @@
 # file_utils.py
-# Small shared helper used by main.py. None of the three AI modules
-# (ocr_module, tamper_module, face_module) know how to open a PDF — they
-# all expect a plain image file (jpg/png). P4's original notebook handled
-# this by converting an uploaded PDF to a PNG before doing anything else
-# with it, so we do the same thing here, once, in one place, so every
-# endpoint gets it for free.
+# High-performance image conversion, downscaling, and lifecycle cleanup utilities.
 
 import os
-import fitz  # PyMuPDF
+import pymupdf  # Replaced deprecated fitz import
 from PIL import Image
 
-def ensure_image(file_path: str) -> str:
-    """If file_path is a PDF, converts its first page to a PNG sitting next
-    to it and returns the PNG's path. If it's already an image, returns the
-    original path unchanged. Only the first page is used — fine for ID
-    documents, which are almost always a single page/side per file.
-    Additionally, downscales large images (max 1500px on the longest edge)
-    to speed up AI processing."""
+
+def ensure_image(file_path: str, max_dimension: int = 1500) -> str:
+    """Converts PDF first page to PNG if necessary and ensures image dimensions
+    are bounded by max_dimension to preserve AI pipeline performance.
+    Returns path to the target image file."""
     ext = os.path.splitext(file_path)[1].lower()
-    
-    # 1. Convert PDF to PNG if necessary
+
     if ext == ".pdf":
-        doc = fitz.open(file_path)
+        doc = pymupdf.open(file_path)
         page = doc.load_page(0)
-        pix = page.get_pixmap()
+        # Render at 150 DPI for sharp OCR
+        pix = page.get_pixmap(dpi=150)
         image_path = file_path.rsplit(".", 1)[0] + ".png"
         pix.save(image_path)
         doc.close()
     else:
         image_path = file_path
 
-    # 2. Downscale large images (max 1500px on the longest edge)
-    img = Image.open(image_path)
-    max_size = 1500
-    if max(img.width, img.height) > max_size:
-        img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-        img.save(image_path)
+    # Downscale in-place if excessively large
+    try:
+        with Image.open(image_path) as img:
+            w, h = img.size
+            if max(w, h) > max_dimension:
+                img.thumbnail((max_dimension, max_dimension), Image.Resampling.BILINEAR)
+                img.save(image_path)
+    except Exception as e:
+        print(f"Warning in image downscale ({image_path}): {e}")
 
     return image_path
+
+
+def cleanup_files(*paths: str) -> None:
+    """Safely removes temporary files from disk without raising exceptions."""
+    for p in paths:
+        if p and os.path.exists(p):
+            try:
+                os.remove(p)
+            except OSError:
+                pass

@@ -15,8 +15,9 @@ export default function Navbar({ page, onMenuClick, verifyStage, onNavigate }) {
   useEffect(() => {
     let cancelled = false;
     const check = async () => {
-      const ok = await pingBackend();
-      if (!cancelled) setStatus(ok ? "connected" : "unavailable");
+      const res = await pingBackend();
+      const isOk = typeof res === "object" ? Boolean(res?.ok) : Boolean(res);
+      if (!cancelled) setStatus(isOk ? "connected" : "unavailable");
     };
     check();
     const interval = setInterval(check, 15000);
